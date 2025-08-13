@@ -1,79 +1,89 @@
 =============================================
 Author:        Ascendion AVA+
-Created on:   
-Description:   This document outlines a Hive workflow for processing and analyzing retail data, including customer orders, sales, and transactions.
+Created on:
+Description:   This document provides a detailed overview of the Hive job for processing retail data.
 =============================================
 
 ---
 
 ### **1. Overview of Job**
 
-*   The Hive job processes retail data by creating several tables to store customer information, orders, sales, and transactions. It demonstrates key Hive features such as table creation, joins, partitioning (static and dynamic), bucketing, views, and the use of a temporary User-Defined Function (UDF).
-*   The job aligns with standard data warehousing practices by structuring raw data into meaningful, queryable formats for analysis.
-*   The business process supported is the analysis of sales performance by region and the identification of frequent customers.
-*   The workflow includes external tables (`customers`, `orders`), managed tables (`sales`, `transactions`), a join between customers and orders, dynamic partitioning to load the `sales` table, aggregations to analyze sales, and a view to find frequent customers.
+This Hive job is designed to process and analyze retail data. It demonstrates a complete data pipeline within Hive, starting from raw data ingestion into tables, followed by transformations, aggregations, and analysis. The job aligns with enterprise data processing practices by structuring data into a dedicated database, using partitioned and bucketed tables for performance optimization, and creating analytical views for business intelligence.
+
+The primary business process supported by this job is sales analysis. It aims to provide insights into sales performance across different geographical regions and to identify high-value, frequent customers based on their order history. The workflow includes creating tables for customers, orders, sales, and transactions, joining these tables to enrich the data, and performing calculations to derive key business metrics.
 
 ---
 
 ### **2. Job Structure and Design**
 
-*   The script follows a sequential structure designed for a complete, self-contained demonstration.
-*   **Major logical steps:**
-    1.  **Setup:** Creates a database `retail_db` to encapsulate all objects.
-    2.  **Table Creation:** Defines external tables (`customers`, `orders`) and managed tables (`sales`, `transactions`). The `sales` table is partitioned, and the `transactions` table is bucketed.
-    3.  **Data Transformation & Loading:** A `CASE` statement within an `INSERT` query handles the logic for dynamic partitioning, loading data from the `transactions` table into the appropriate partition in the `sales` table.
-    4.  **Analysis:** Aggregations (`COUNT`, `SUM`) are used to analyze sales data. A view (`frequent_customers`) is created using a join, filter (`HAVING`), and aggregation to identify repeat customers.
-    5.  **Cleanup:** Drops the view, all tables, and the database to ensure a clean state after execution.
-*   **Reusable Components:** A temporary UDF (`reverse_string`) is created for a custom transformation, demonstrating extensibility.
-*   **Dependencies:** The script implicitly depends on external comma-delimited text files for the `customers` and `orders` tables.
+The Hive script is a sequential workflow executing a series of SQL-like commands (HQL). The structure follows a logical progression from setup to cleanup.
+
+*   **Setup:**
+    *   A database `retail_db` is created to logically group all related tables.
+*   **Table Creation:**
+    *   `customers`: Stores customer profile information.
+    *   `orders`: Stores customer order history.
+    *   `sales`: A partitioned table to store sales data by `region`, enabling efficient querying on regional data.
+    *   `transactions`: A bucketed table, clustered by `customer_id`, which helps in optimizing joins or sampling on the customer dimension.
+*   **Data Transformation and Loading:**
+    *   A `JOIN` operation is performed between `customers` and `orders` to link customers with their orders.
+    *   Dynamic partitioning is used to insert data from the `transactions` table into the `sales` table, automatically creating partitions based on the `region` column.
+*   **Data Analysis and Aggregation:**
+    *   A `GROUP BY` query on the `sales` table calculates the total number of sales and the total sales amount for each region.
+    *   A temporary User-Defined Function (UDF) `reverse_string` is created and used to demonstrate custom data manipulation.
+*   **View Creation:**
+    *   A view `frequent_customers` is created to encapsulate the logic for identifying customers who have placed more than one order. This provides a reusable component for querying frequent customers.
+*   **Dependencies:**
+    *   The script is self-contained in its logic but implicitly depends on external data files for the `customers` and `orders` tables to be loaded into the Hadoop Distributed File System (HDFS) at the correct location.
+*   **Cleanup:**
+    *   The script concludes by dropping the view, all created tables, and the database to ensure a clean state after execution.
 
 ---
 
 ### **3. Data Flow and Processing Logic**
 
+The data flows from source tables through various processing steps to produce analytical outputs.
+
 ```
 +----------------------------------------------+
-| [Start]                                      |
-| Description: Create retail_db database.      |
+| [Source Tables]                              |
+| Description: Create and define schema for    |
+| customers, orders, transactions, and sales.  |
 +----------------------------------------------+
-↓
-+----------------------------------------------+
-| [Create Tables]                              |
-| Description: Create customers, orders,       |
-| sales, and transactions tables.              |
-+----------------------------------------------+
-↓
+                        |
+                        ↓
 +----------------------------------------------+
 | [Join Customers and Orders]                  |
-| Description: Join tables to link customers   |
-| with their orders.                           |
+| Description: Combine customer data with      |
+| their corresponding order information.        |
 +----------------------------------------------+
-↓
+                        |
+                        ↓
 +----------------------------------------------+
-| [Load Sales Data]                            |
-| Description: Insert data from transactions   |
-| into sales using dynamic partitioning.       |
+| [Load Sales Data via Dynamic Partitioning]   |
+| Description: Insert transaction data into    |
+| the sales table, partitioned by region.      |
 +----------------------------------------------+
-↓
+                        |
+                        ↓
 +----------------------------------------------+
-| [Analyze Sales]                              |
-| Description: Aggregate sales data by region. |
+| [Analyze Sales by Region]                    |
+| Description: Aggregate sales data to get     |
+| total sales and amount per region.           |
 +----------------------------------------------+
-↓
+                        |
+                        ↓
 +----------------------------------------------+
-| [Create Frequent Customers View]             |
-| Description: Identify customers with more    |
-| than one order.                              |
+| [Identify Frequent Customers]                |
+| Description: Create a view to list customers |
+| with more than one order.                    |
 +----------------------------------------------+
-↓
+                        |
+                        ↓
 +----------------------------------------------+
-| [Cleanup]                                    |
-| Description: Drop all created objects.       |
-+----------------------------------------------+
-↓
-+----------------------------------------------+
-| [End]                                        |
-| Description: Workflow complete.              |
+| [Final Outputs]                              |
+| Description: Queries on sales analysis and   |
+| frequent customers view.                     |
 +----------------------------------------------+
 ```
 
@@ -81,45 +91,45 @@ Description:   This document outlines a Hive workflow for processing and analyzi
 
 ### **4. Data Mapping**
 
-| Target Table Name  | Target Column Name | Source Table/Step Name | Source Column Name | Transformation Rule / Business Logic                                  |
-| ------------------ | ------------------ | ---------------------- | ------------------ | --------------------------------------------------------------------- |
-| sales              | sale_id            | transactions           | transaction_id     | Direct mapping                                                        |
-| sales              | sale_amount        | transactions           | amount             | Direct mapping                                                        |
-| sales              | sale_date          | transactions           | transaction_date   | Direct mapping                                                        |
-| sales              | region             | transactions           | customer_id        | `CASE WHEN customer_id IN (1, 2) THEN 'north_america' ELSE 'europe' END` |
-| frequent_customers | customer_name      | customers              | customer_name      | Group by customer_name                                                |
-| frequent_customers | total_orders       | orders                 | order_id           | `COUNT(o.order_id)`                                                   |
+| Target Table Name      | Target Column Name | Source Table/Step Name | Source Column Name | Transformation Rule / Business Logic                               |
+| ---------------------- | ------------------ | ---------------------- | ------------------ | ------------------------------------------------------------------ |
+| sales                  | sale_id            | transactions           | transaction_id     | Direct mapping.                                                    |
+| sales                  | sale_amount        | transactions           | amount             | Direct mapping.                                                    |
+| sales                  | sale_date          | transactions           | transaction_date   | Direct mapping.                                                    |
+| sales                  | region             | transactions           | customer_id        | `CASE WHEN customer_id IN (1, 2) THEN 'north_america' ELSE 'europe' END` |
+| frequent_customers     | customer_name      | customers              | customer_name      | Direct mapping.                                                    |
+| frequent_customers     | total_orders       | orders                 | order_id           | `COUNT(o.order_id)` with `GROUP BY c.customer_name` and `HAVING COUNT > 1` |
 
 ---
 
 ### **5. Complexity Analysis**
 
-| Category                   | Measurement                                           |
-| -------------------------- | ----------------------------------------------------- |
-| Number of Tables Used      | 4 (customers, orders, sales, transactions) + 1 View   |
-| Source/Target Systems      | HDFS (for Textfile storage)                           |
-| Transformation Steps       | 5 (Join, Dynamic Partition Insert, Aggregation, UDF, View Creation) |
-| Parameters Used            | 2 (`hive.exec.dynamic.partition`, `hive.exec.dynamic.partition.mode`) |
-| Reusable Components        | 1 (Temporary UDF `reverse_string`)                    |
-| Control Logic              | 1 (CASE statement for partitioning)                   |
-| External Dependencies      | 2 (Input data files for `customers` and `orders`)     |
-| Performance Considerations | Partitioning (`sales`), Bucketing (`transactions`)    |
-| Volume Handling            | Dynamic partitioning is suitable for large datasets.  |
-| Error Handling             | None explicitly defined.                              |
-| Overall Complexity Score   | 65 (out of 100)                                       |
+| Category                   | Measurement                                                              |
+| -------------------------- | ------------------------------------------------------------------------ |
+| Number of Tables Used      | 4 tables (`customers`, `orders`, `sales`, `transactions`) and 1 view (`frequent_customers`). |
+| Source/Target Systems      | Hive / HDFS.                                                             |
+| Transformation Steps       | 5 (Join, Dynamic Partition Insert, Aggregation, UDF, View Creation).     |
+| Parameters Used            | 2 (`hive.exec.dynamic.partition`, `hive.exec.dynamic.partition.mode`).   |
+| Reusable Components        | 1 view (`frequent_customers`).                                           |
+| Control Logic              | `CASE` statement for partitioning logic.                                 |
+| External Dependencies      | Implicit dependency on external data files for table loading.            |
+| Performance Considerations | Partitioning (`sales` table) and Bucketing (`transactions` table) are used. |
+| Volume Handling            | Designed to handle large volumes through partitioning and bucketing.     |
+| Error Handling             | `IF NOT EXISTS` and `IF EXISTS` clauses provide basic error handling for object creation/deletion. |
+| Overall Complexity Score   | 65 (out of 100)                                                          |
 
 ---
 
 ### **6. Key Outputs**
 
-*   The primary outputs of this script are the results of the analytical queries, which are displayed to the console upon execution. The script does not conclude with a persistent output table, as it includes a cleanup phase that drops all created objects.
-*   **Key analytical insights generated:**
-    *   A summary of total sales counts and total sales amounts, aggregated by region.
-    *   A list of frequent customers, defined as those who have placed more than one order.
-*   To make these outputs persistent, the final `SELECT` statements would need to be modified to write to a new Hive table or an external file system location.
+*   **Regional Sales Analysis:** The primary output is the result of the query that groups the `sales` table by `region`. This provides a summary of `total_sales` and `total_amount` for each region, which is crucial for business performance monitoring.
+*   **Frequent Customer List:** The `frequent_customers` view provides a list of customers who have made more than one purchase. This output can be used by marketing teams for targeted campaigns or loyalty programs.
+*   **Data Manipulation Example:** The query using the `reverse_string` UDF serves as a technical output, demonstrating the capability to apply custom transformations within the Hive environment.
+
+These outputs support downstream analytical systems, business intelligence dashboards, and data-driven marketing activities.
 
 ---
 
 ### **7. API Cost Calculations**
 
-*   `apiCost: 0.0015 USD`
+apiCost: 0.0015 USD
