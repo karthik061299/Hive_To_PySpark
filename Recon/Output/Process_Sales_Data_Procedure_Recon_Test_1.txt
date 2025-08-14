@@ -1,0 +1,708 @@
+=============================================
+Author:        Ascendion AVA+
+Created on:   
+Description:   Comprehensive Recon Test Case for Hive to PySpark migration validation with end-to-end data comparison
+=============================================
+
+#!/usr/bin/env python3
+"""
+Metadata:
+Author: Ascendion AVA+
+Created on: 
+Description: Comprehensive Recon Test Case for Hive to PySpark migration validation with end-to-end data comparison
+"""
+
+import os
+import sys
+import logging
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional, Any
+import json
+import hashlib
+from pathlib import Path
+import traceback
+
+# Database and Spark imports
+try:
+    from pyhive import hive
+    from pyspark.sql import SparkSession, DataFrame
+    from pyspark.sql.functions import *
+    from pyspark.sql.types import *
+    import pyodbc
+    from azure.storage.blob import BlobServiceClient
+    from databricks import sql as databricks_sql
+except ImportError as e:
+    print(f"Required package not found: {e}")
+    print("Please install: pip install pyhive pyspark pyodbc azure-storage-blob databricks-sql-connector")
+    sys.exit(1)
+
+class HiveToPySparkReconValidator:
+    """
+    Comprehensive validation framework for Hive to PySpark migration
+    Handles end-to-end execution, data transfer, and result comparison
+    
+    This class provides a complete framework for validating Hive to PySpark migrations by:
+    1. Executing original Hive procedures
+    2. Exporting Hive results to CSV/Parquet formats
+    3. Transferring data to Databricks storage
+    4. Creating external tables in PySpark
+    5. Executing equivalent PySpark code
+    6. Comparing results between Hive and PySpark
+    7. Generating comprehensive validation reports
+    """
+    
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize the recon validator with configuration
+        
+        Args:
+            config: Configuration dictionary containing connection details for:
+                   - hive: Hive connection parameters
+                   - spark: Spark session configurations
+                   - databricks: Databricks connection details
+                   - azure: Azure storage credentials
+        """
+        self.config = config
+        self.setup_logging()
+        self.hive_conn = None
+        self.spark = None
+        self.databricks_conn = None
+        self.results = {
+            'hive_results': {},
+            'pyspark_results': {},
+            'comparison_results': {},
+            'execution_metadata': {}
+        }
+        
+    def setup_logging(self):
+        """
+        Setup comprehensive logging configuration with file and console handlers
+        """
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        logging.basicConfig(
+            level=logging.INFO,
+            format=log_format,
+            handlers=[
+                logging.FileHandler(f'recon_validation_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+        
+    def create_hive_connection(self) -> bool:
+        """
+        Establish connection to Hive using PyHive
+        
+        Returns:
+            bool: True if connection successful, False otherwise
+        """
+        try:
+            self.logger.info("Establishing Hive connection...")
+            self.hive_conn = hive.Connection(
+                host=self.config['hive']['host'],
+                port=self.config['hive']['port'],
+                username=self.config['hive']['username'],
+                password=self.config['hive'].get('password'),
+                database=self.config['hive']['database'],
+                auth=self.config['hive'].get('auth', 'NOSASL')
+            )
+            
+            # Test connection
+            cursor = self.hive_conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            
+            self.logger.info("Hive connection established successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to connect to Hive: {str(e)}")
+            return False
+    
+    def create_spark_session(self) -> bool:
+        """
+        Create Spark session for PySpark operations with optimized configurations
+        
+        Returns:
+            bool: True if session created successfully, False otherwise
+        """
+        try:
+            self.logger.info("Creating Spark session...")
+            
+            spark_config = self.config.get('spark', {})
+            builder = SparkSession.builder.appName("HiveToPySparkReconValidation")
+            
+            # Apply Spark configurations
+            for key, value in spark_config.items():
+                builder = builder.config(key, value)
+            
+            self.spark = builder.getOrCreate()
+            self.spark.sparkContext.setLogLevel("WARN")
+            
+            self.logger.info("Spark session created successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create Spark session: {str(e)}")
+            return False
+    
+    def create_databricks_connection(self) -> bool:
+        """
+        Establish connection to Databricks using databricks-sql-connector
+        
+        Returns:
+            bool: True if connection successful, False otherwise
+        """
+        try:
+            self.logger.info("Establishing Databricks connection...")
+            
+            self.databricks_conn = databricks_sql.connect(
+                server_hostname=self.config['databricks']['server_hostname'],
+                http_path=self.config['databricks']['http_path'],
+                access_token=self.config['databricks']['access_token']
+            )
+            
+            # Test connection
+            cursor = self.databricks_conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            
+            self.logger.info("Databricks connection established successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to connect to Databricks: {str(e)}")
+            return False
+    
+    def execute_hive_procedure(self, start_date: str, end_date: str) -> Dict[str, Any]:
+        """
+        Execute the original Hive procedure process_sales_data and capture results
+        
+        This method replicates the original Hive stored procedure:
+        1. Executes dynamic query to insert into summary_table
+        2. Creates temporary table with aggregated data
+        3. Simulates cursor operations with batch insert
+        4. Captures execution time and results
+        
+        Args:
+            start_date: Start date for sales data filtering (YYYY-MM-DD format)
+            end_date: End date for sales data filtering (YYYY-MM-DD format)
+            
+        Returns:
+            Dict containing execution results, timing, and exported data
+        """
+        try:
+            self.logger.info(f"Executing Hive procedure for date range: {start_date} to {end_date}")
+            
+            cursor = self.hive_conn.cursor()
+            execution_start = datetime.now()
+            
+            # Clear target tables before execution to ensure clean state
+            cursor.execute("DELETE FROM summary_table WHERE 1=1")
+            cursor.execute("DELETE FROM detailed_sales_summary WHERE 1=1")
+            
+            # Step 1: Execute the dynamic query equivalent
+            # Original: SET @dynamic_query = CONCAT(...); EXECUTE IMMEDIATE @dynamic_query;
+            dynamic_query = f"""
+            INSERT INTO summary_table 
+            SELECT product_id, SUM(sales) AS total_sales 
+            FROM sales_table 
+            WHERE sale_date BETWEEN '{start_date}' AND '{end_date}' 
+            GROUP BY product_id
+            """
+            cursor.execute(dynamic_query)
+            
+            # Step 2: Create temporary table equivalent
+            # Original: CREATE TEMPORARY TABLE temp_sales_summary AS SELECT ...
+            temp_table_query = f"""
+            CREATE TEMPORARY TABLE temp_sales_summary AS
+            SELECT product_id, SUM(sales) AS total_sales
+            FROM sales_table
+            WHERE sale_date BETWEEN '{start_date}' AND '{end_date}'
+            GROUP BY product_id
+            """
+            cursor.execute(temp_table_query)
+            
+            # Step 3: Simulate cursor operations with batch insert
+            # Original: DECLARE cur CURSOR FOR ... + WHILE loop
+            cursor_simulation_query = f"""
+            INSERT INTO detailed_sales_summary (product_id, total_sales)
+            SELECT product_id, total_sales 
+            FROM temp_sales_summary
+            WHERE total_sales IS NOT NULL
+            """
+            cursor.execute(cursor_simulation_query)
+            
+            # Step 4: Cleanup temporary table
+            # Original: DROP TABLE temp_sales_summary
+            cursor.execute("DROP TABLE temp_sales_summary")
+            
+            execution_end = datetime.now()
+            execution_time = (execution_end - execution_start).total_seconds()
+            
+            # Export results from target tables for comparison
+            summary_results = self.export_hive_table_data("summary_table")
+            detailed_results = self.export_hive_table_data("detailed_sales_summary")
+            
+            cursor.close()
+            
+            results = {
+                'summary_table': summary_results,
+                'detailed_sales_summary': detailed_results,
+                'execution_time': execution_time,
+                'execution_timestamp': execution_start.isoformat(),
+                'status': 'SUCCESS'
+            }
+            
+            self.logger.info(f"Hive procedure executed successfully in {execution_time:.2f} seconds")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error executing Hive procedure: {str(e)}")
+            return {
+                'status': 'FAILED',
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            }
+    
+    def export_hive_table_data(self, table_name: str) -> Dict[str, Any]:
+        """
+        Export Hive table data to CSV and Parquet formats for transfer
+        
+        Args:
+            table_name: Name of the Hive table to export
+            
+        Returns:
+            Dict containing exported data, file paths, and statistics
+        """
+        try:
+            self.logger.info(f"Exporting Hive table: {table_name}")
+            
+            cursor = self.hive_conn.cursor()
+            cursor.execute(f"SELECT * FROM {table_name}")
+            
+            # Fetch all data and column metadata
+            data = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            
+            # Create pandas DataFrame for processing
+            df = pd.DataFrame(data, columns=columns)
+            
+            # Create export directory if it doesn't exist
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            csv_path = f"exports/{table_name}_{timestamp}.csv"
+            os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+            
+            # Export to CSV format
+            df.to_csv(csv_path, index=False)
+            
+            # Export to Parquet format (more efficient for large datasets)
+            parquet_path = csv_path.replace('.csv', '.parquet')
+            df.to_parquet(parquet_path, index=False)
+            
+            cursor.close()
+            
+            # Calculate comprehensive data statistics
+            stats = {
+                'row_count': len(df),
+                'column_count': len(df.columns),
+                'columns': list(df.columns),
+                'data_types': {str(k): str(v) for k, v in df.dtypes.to_dict().items()},
+                'null_counts': df.isnull().sum().to_dict(),
+                'data_hash': hashlib.md5(df.to_string().encode()).hexdigest(),
+                'export_timestamp': timestamp
+            }
+            
+            return {
+                'data': df,
+                'csv_path': csv_path,
+                'parquet_path': parquet_path,
+                'statistics': stats,
+                'status': 'SUCCESS'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error exporting table {table_name}: {str(e)}")
+            return {
+                'status': 'FAILED',
+                'error': str(e)
+            }
+    
+    def transfer_to_databricks(self, file_paths: List[str]) -> Dict[str, Any]:
+        """
+        Transfer Parquet files to Databricks/Azure storage for PySpark access
+        
+        Args:
+            file_paths: List of local Parquet file paths to transfer
+            
+        Returns:
+            Dict containing transfer results and file metadata
+        """
+        try:
+            self.logger.info("Transferring files to Databricks storage...")
+            
+            # Initialize Azure Blob Storage client
+            blob_service_client = BlobServiceClient(
+                account_url=self.config['azure']['account_url'],
+                credential=self.config['azure']['credential']
+            )
+            
+            container_name = self.config['azure']['container_name']
+            transferred_files = []
+            
+            for file_path in file_paths:
+                if os.path.exists(file_path):
+                    # Create blob path with recon_data prefix
+                    blob_name = f"recon_data/{os.path.basename(file_path)}"
+                    
+                    # Upload file to Azure Blob Storage
+                    with open(file_path, 'rb') as data:
+                        blob_client = blob_service_client.get_blob_client(
+                            container=container_name, 
+                            blob=blob_name
+                        )
+                        blob_client.upload_blob(data, overwrite=True)
+                    
+                    transferred_files.append({
+                        'local_path': file_path,
+                        'blob_path': blob_name,
+                        'size': os.path.getsize(file_path),
+                        'transfer_timestamp': datetime.now().isoformat()
+                    })
+                    
+                    self.logger.info(f"Transferred: {file_path} -> {blob_name}")
+                else:
+                    self.logger.warning(f"File not found: {file_path}")
+            
+            return {
+                'transferred_files': transferred_files,
+                'total_files': len(transferred_files),
+                'status': 'SUCCESS'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error transferring files to Databricks: {str(e)}")
+            return {
+                'status': 'FAILED',
+                'error': str(e)
+            }
+    
+    def create_external_tables_pyspark(self, transferred_files: List[Dict]) -> Dict[str, Any]:
+        """
+        Create external tables in PySpark pointing to uploaded Parquet files
+        
+        Args:
+            transferred_files: List of transferred file information from transfer step
+            
+        Returns:
+            Dict containing created table information and metadata
+        """
+        try:
+            self.logger.info("Creating external tables in PySpark...")
+            
+            created_tables = {}
+            
+            for file_info in transferred_files:
+                blob_path = file_info['blob_path']
+                # Extract table name from file path (remove timestamp and extension)
+                table_name = os.path.basename(blob_path).split('_')[0] + '_' + os.path.basename(blob_path).split('_')[1]
+                if table_name.endswith('.parquet'):
+                    table_name = table_name.replace('.parquet', '')
+                
+                # Construct full Azure ABFSS path
+                azure_path = f"abfss://{self.config['azure']['container_name']}@{self.config['azure']['account_name']}.dfs.core.windows.net/{blob_path}"
+                
+                # Read Parquet file as Spark DataFrame
+                df = self.spark.read.parquet(azure_path)
+                
+                # Create temporary view for SQL access
+                df.createOrReplaceTempView(table_name)
+                
+                created_tables[table_name] = {
+                    'path': azure_path,
+                    'row_count': df.count(),
+                    'columns': df.columns,
+                    'schema': df.schema.json(),
+                    'creation_timestamp': datetime.now().isoformat()
+                }
+                
+                self.logger.info(f"Created external table: {table_name} with {df.count()} rows")
+            
+            return {
+                'created_tables': created_tables,
+                'total_tables': len(created_tables),
+                'status': 'SUCCESS'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error creating external tables: {str(e)}")
+            return {
+                'status': 'FAILED',
+                'error': str(e)
+            }
+    
+    def execute_pyspark_equivalent(self, start_date: str, end_date: str) -> Dict[str, Any]:
+        """
+        Execute PySpark equivalent of the Hive procedure process_sales_data
+        
+        This method implements the PySpark DataFrame equivalent of the original Hive procedure:
+        1. Reads sales_table data
+        2. Applies date filtering
+        3. Performs aggregation (replaces dynamic query)
+        4. Caches DataFrame (replaces temporary table)
+        5. Processes data (replaces cursor operations)
+        
+        Args:
+            start_date: Start date for sales data filtering
+            end_date: End date for sales data filtering
+            
+        Returns:
+            Dict containing PySpark execution results and statistics
+        """
+        try:
+            self.logger.info(f"Executing PySpark equivalent for date range: {start_date} to {end_date}")
+            
+            execution_start = datetime.now()
+            
+            # Step 1: Read source data (equivalent to accessing sales_table in Hive)
+            sales_df = self.spark.table("sales_table")
+            
+            # Step 2: Apply date filtering (equivalent to WHERE clause)
+            filtered_sales = sales_df.filter(
+                (col("sale_date") >= start_date) & 
+                (col("sale_date") <= end_date)
+            )
+            
+            # Step 3: Create summary data (equivalent to dynamic query execution)
+            # Original: INSERT INTO summary_table SELECT product_id, SUM(sales) AS total_sales ...
+            summary_data = filtered_sales.groupBy("product_id").agg(
+                sum("sales").alias("total_sales")
+            )
+            
+            # Step 4: Cache DataFrame for reuse (equivalent to temporary table)
+            # Original: CREATE TEMPORARY TABLE temp_sales_summary AS SELECT ...
+            summary_data.cache()
+            
+            # Step 5: Create detailed summary (equivalent to cursor operations)
+            # Original: DECLARE cur CURSOR FOR ... + WHILE loop
+            detailed_summary = summary_data.filter(col("total_sales").isNotNull())
+            
+            execution_end = datetime.now()
+            execution_time = (execution_end - execution_start).total_seconds()
+            
+            # Convert Spark DataFrames to Pandas for comparison
+            summary_pandas = summary_data.toPandas()
+            detailed_pandas = detailed_summary.toPandas()
+            
+            # Calculate comprehensive statistics
+            summary_stats = {
+                'row_count': summary_data.count(),
+                'column_count': len(summary_data.columns),
+                'columns': summary_data.columns,
+                'data_hash': hashlib.md5(summary_pandas.to_string().encode()).hexdigest()
+            }
+            
+            detailed_stats = {
+                'row_count': detailed_summary.count(),
+                'column_count': len(detailed_summary.columns),
+                'columns': detailed_summary.columns,
+                'data_hash': hashlib.md5(detailed_pandas.to_string().encode()).hexdigest()
+            }
+            
+            # Cleanup cached DataFrame (equivalent to DROP TABLE temp_sales_summary)
+            summary_data.unpersist()
+            
+            results = {
+                'summary_table': {
+                    'data': summary_pandas,
+                    'statistics': summary_stats,
+                    'status': 'SUCCESS'
+                },
+                'detailed_sales_summary': {
+                    'data': detailed_pandas,
+                    'statistics': detailed_stats,
+                    'status': 'SUCCESS'
+                },
+                'execution_time': execution_time,
+                'execution_timestamp': execution_start.isoformat(),
+                'status': 'SUCCESS'
+            }
+            
+            self.logger.info(f"PySpark equivalent executed successfully in {execution_time:.2f} seconds")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error executing PySpark equivalent: {str(e)}")
+            return {
+                'status': 'FAILED',
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            }
+    
+    def compare_results(self, hive_results: Dict, pyspark_results: Dict) -> Dict[str, Any]:
+        """
+        Compare results between Hive and PySpark executions
+        
+        Performs comprehensive comparison including:
+        1. Row count validation
+        2. Column schema validation
+        3. Data content comparison
+        4. Performance analysis
+        5. Data quality checks
+        
+        Args:
+            hive_results: Results from Hive execution
+            pyspark_results: Results from PySpark execution
+            
+        Returns:
+            Dict containing detailed comparison results and overall status
+        """
+        try:
+            self.logger.info("Comparing Hive and PySpark results...")
+            
+            comparison_results = {
+                'overall_status': 'UNKNOWN',
+                'table_comparisons': {},
+                'performance_comparison': {},
+                'data_quality_checks': {},
+                'comparison_timestamp': datetime.now().isoformat()
+            }
+            
+            # Target tables to compare (identified from original Hive procedure)
+            tables_to_compare = ['summary_table', 'detailed_sales_summary']
+            all_tables_match = True
+            
+            # Compare each target table
+            for table_name in tables_to_compare:
+                if table_name in hive_results and table_name in pyspark_results:
+                    table_comparison = self.compare_table_data(
+                        hive_results[table_name],
+                        pyspark_results[table_name],
+                        table_name
+                    )
+                    comparison_results['table_comparisons'][table_name] = table_comparison
+                    
+                    if not table_comparison.get('data_matches', False):
+                        all_tables_match = False
+                        self.logger.warning(f"Data mismatch detected in table: {table_name}")
+                else:
+                    self.logger.error(f"Missing table data for comparison: {table_name}")
+                    all_tables_match = False
+            
+            # Performance comparison analysis
+            hive_time = hive_results.get('execution_time', 0)
+            pyspark_time = pyspark_results.get('execution_time', 0)
+            
+            performance_improvement = 0
+            if hive_time > 0:
+                performance_improvement = ((hive_time - pyspark_time) / hive_time * 100)
+            
+            comparison_results['performance_comparison'] = {
+                'hive_execution_time': hive_time,
+                'pyspark_execution_time': pyspark_time,
+                'performance_improvement_percent': performance_improvement,
+                'faster_framework': 'PySpark' if pyspark_time < hive_time else 'Hive',
+                'time_difference_seconds': abs(hive_time - pyspark_time)
+            }
+            
+            # Data quality checks
+            comparison_results['data_quality_checks'] = {
+                'total_tables_compared': len(tables_to_compare),
+                'tables_with_data_match': sum(1 for comp in comparison_results['table_comparisons'].values() 
+                                            if comp.get('data_matches', False)),
+                'tables_with_row_count_match': sum(1 for comp in comparison_results['table_comparisons'].values() 
+                                                 if comp.get('row_count_match', False)),
+                'tables_with_schema_match': sum(1 for comp in comparison_results['table_comparisons'].values() 
+                                              if comp.get('schema_match', False))
+            }
+            
+            # Determine overall validation status
+            comparison_results['overall_status'] = 'PASS' if all_tables_match else 'FAIL'
+            
+            self.logger.info(f"Results comparison completed. Overall status: {comparison_results['overall_status']}")
+            return comparison_results
+            
+        except Exception as e:
+            self.logger.error(f"Error comparing results: {str(e)}")
+            return {
+                'overall_status': 'ERROR',
+                'error': str(e),
+                'comparison_timestamp': datetime.now().isoformat()
+            }
+    
+    def compare_table_data(self, hive_data: Dict, pyspark_data: Dict, table_name: str) -> Dict[str, Any]:
+        """
+        Compare data between Hive and PySpark for a specific table
+        
+        Performs detailed comparison including:
+        - Row count validation
+        - Column schema validation  
+        - Data type consistency
+        - Content comparison with difference sampling
+        - Statistical analysis
+        
+        Args:
+            hive_data: Hive table data and metadata
+            pyspark_data: PySpark table data and metadata
+            table_name: Name of the table being compared
+            
+        Returns:
+            Dict containing detailed table comparison results
+        """
+        try:
+            self.logger.info(f"Comparing table data for: {table_name}")
+            
+            hive_df = hive_data['data']
+            pyspark_df = pyspark_data['data']
+            
+            comparison = {
+                'table_name': table_name,
+                'data_matches': False,
+                'row_count_match': False,
+                'column_count_match': False,
+                'schema_match': False,
+                'content_match': False,
+                'differences': [],
+                'statistics': {},
+                'comparison_timestamp': datetime.now().isoformat()
+            }
+            
+            # Row count comparison
+            hive_rows = len(hive_df)
+            pyspark_rows = len(pyspark_df)
+            comparison['row_count_match'] = hive_rows == pyspark_rows
+            
+            if not comparison['row_count_match']:
+                comparison['differences'].append(f"Row count mismatch: Hive={hive_rows}, PySpark={pyspark_rows}")
+            
+            # Column count comparison
+            hive_cols = len(hive_df.columns)
+            pyspark_cols = len(pyspark_df.columns)
+            comparison['column_count_match'] = hive_cols == pyspark_cols
+            
+            if not comparison['column_count_match']:
+                comparison['differences'].append(f"Column count mismatch: Hive={hive_cols}, PySpark={pyspark_cols}")
+            
+            # Schema comparison (column names)
+            hive_columns = set(hive_df.columns)
+            pyspark_columns = set(pyspark_df.columns)
+            comparison['schema_match'] = hive_columns == pyspark_columns
+            
+            if not comparison['schema_match']:
+                missing_in_pyspark = hive_columns - pyspark_columns
+                missing_in_hive = pyspark_columns - hive_columns
+                
+                if missing_in_pyspark:
+                    comparison['differences'].append(f"Columns missing in PySpark: {list(missing_in_pyspark)}")
+                if missing_in_hive:
+                    comparison['differences'].append(f"Columns missing in Hive: {list(missing_in_hive)}")
+            
+            # Content comparison (if basic structure matches)
+            if comparison['schema_match'] and comparison['row_count_match']:
+                try:
+                    # Handle edge cases and data type differences
+                    hive_processed = self.handle_edge_cases(hive_df.copy())
