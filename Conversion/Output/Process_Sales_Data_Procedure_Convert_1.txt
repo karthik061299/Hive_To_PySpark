@@ -36,119 +36,73 @@ from pyspark.sql.functions import sum as spark_sum, col
 from pyspark.sql.types import StructType, StructField, StringType, FloatType
 import logging
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def create_spark_session(app_name="ProcessSalesDataConversion"):
-    """
-    Initialize Spark Session with optimized configurations
-    """
-    spark = SparkSession.builder \
-        .appName(app_name) \
-        .config("spark.sql.adaptive.enabled", "true") \
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
-        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
-        .enableHiveSupport() \
+    spark = (
+        SparkSession.builder
+        .appName(app_name)
+        # Enable Delta Lake support
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .getOrCreate()
-    
+    )
     spark.sparkContext.setLogLevel("WARN")
     return spark
 
 def process_sales_data(spark, start_date, end_date):
-    """
-    PySpark equivalent of Hive stored procedure process_sales_data
-    
-    This function converts the original Hive stored procedure logic:
-    1. Aggregates sales data and inserts into summary_table
-    2. Creates temporary aggregated data (replaces temp table)
-    3. Processes each record (replaces cursor iteration)
-    4. Inserts into detailed_sales_summary table
-    
-    Args:
-        spark (SparkSession): Active Spark session
-        start_date (str): Start date for filtering sales data
-        end_date (str): End date for filtering sales data
-    
-    Returns:
-        bool: True if processing completed successfully
-    """
-    
     try:
         logger.info(f"Starting sales data processing for date range: {start_date} to {end_date}")
         
-        # Read sales_table - equivalent to accessing sales_table in Hive
-        logger.info("Reading sales_table data")
-        sales_df = spark.table("sales_table")
+        # === Delta read instead of Hive table ===
+        logger.info("Reading sales_table Delta data")
+        sales_df = spark.read.format("delta").load("/delta/sales_table")
         
-        # Apply date filtering - equivalent to WHERE sale_date BETWEEN start_date AND end_date
-        logger.info("Applying date range filter")
         filtered_sales_df = sales_df.filter(
             (col("sale_date") >= start_date) & 
             (col("sale_date") <= end_date)
         )
         
-        # CONVERSION STEP 1: Replace dynamic query execution
-        # Original: Dynamic INSERT INTO summary_table with aggregated data
-        logger.info("Performing aggregation for summary_table")
+        # Summary aggregation
+        logger.info("Aggregating sales data for summary_table")
         summary_aggregated_df = filtered_sales_df.groupBy("product_id") \
             .agg(spark_sum("sales").alias("total_sales"))
         
-        # Insert aggregated data into summary_table
-        # Equivalent to: INSERT INTO summary_table SELECT product_id, SUM(sales) AS total_sales ...
-        logger.info("Writing aggregated data to summary_table")
-        summary_aggregated_df.write \
+        # === Delta write ===
+        logger.info("Writing aggregated data to Delta summary_table")
+        summary_aggregated_df.write.format("delta") \
             .mode("append") \
-            .insertInto("summary_table")
+            .save("/delta/summary_table")
         
-        # CONVERSION STEP 2: Replace temporary table creation
-        # Original: CREATE TEMPORARY TABLE temp_sales_summary AS SELECT ...
-        logger.info("Creating temporary aggregated dataset (replaces temp table)")
+        # Temporary aggregated dataset
         temp_sales_summary_df = filtered_sales_df.groupBy("product_id") \
             .agg(spark_sum("sales").alias("total_sales"))
-        
-        # Cache the DataFrame to optimize repeated access (replaces temp table)
         temp_sales_summary_df.cache()
         
-        # CONVERSION STEP 3: Replace cursor iteration with DataFrame operations
-        # Original: DECLARE cur CURSOR FOR SELECT ... + WHILE loop
-        logger.info("Processing records for detailed_sales_summary (replaces cursor iteration)")
-        
-        # Collect records for processing - equivalent to cursor fetch operations
-        # Note: In production, consider using foreachPartition for large datasets
         records_to_process = temp_sales_summary_df.collect()
         
-        logger.info(f"Processing {len(records_to_process)} records")
-        
-        # Convert collected records back to DataFrame for batch insertion
-        # This replaces the row-by-row cursor insertion with efficient batch processing
         if records_to_process:
-            # Define schema for detailed_sales_summary insertion
             detailed_schema = StructType([
                 StructField("product_id", StringType(), True),
                 StructField("total_sales", FloatType(), True)
             ])
-            
-            # Create DataFrame from processed records
             detailed_sales_df = spark.createDataFrame(records_to_process, detailed_schema)
             
-            # Batch insert into detailed_sales_summary table
-            # Equivalent to: INSERT INTO detailed_sales_summary (product_id, total_sales) VALUES ...
-            logger.info("Inserting processed records into detailed_sales_summary")
-            detailed_sales_df.write \
+            logger.info("Writing processed records to Delta detailed_sales_summary")
+            detailed_sales_df.write.format("delta") \
                 .mode("append") \
-                .insertInto("detailed_sales_summary")
+                .save("/delta/detailed_sales_summary")
         
-        # CONVERSION STEP 4: Cleanup cached DataFrame (replaces DROP TABLE temp_sales_summary)
-        logger.info("Cleaning up cached temporary data")
         temp_sales_summary_df.unpersist()
-        
         logger.info("Sales data processing completed successfully")
         return True
-        
+    
     except Exception as e:
         logger.error(f"Error processing sales data: {str(e)}")
-        # Ensure cleanup in case of error
         try:
             temp_sales_summary_df.unpersist()
         except:
@@ -156,34 +110,21 @@ def process_sales_data(spark, start_date, end_date):
         raise e
 
 def main():
-    """
-    Main execution function - demonstrates usage of the converted procedure
-    """
-    # Initialize Spark Session
     spark = create_spark_session()
-    
     try:
-        # Example usage - replace with actual parameter values
         start_date = "2024-01-01"
         end_date = "2024-12-31"
-        
-        # Execute the converted procedure
         success = process_sales_data(spark, start_date, end_date)
-        
         if success:
-            logger.info("Hive procedure conversion executed successfully")
+            logger.info("Procedure executed successfully with Delta tables")
         else:
             logger.error("Procedure execution failed")
-            
-    except Exception as e:
-        logger.error(f"Main execution failed: {str(e)}")
-        raise e
     finally:
-        # Clean up Spark session
         spark.stop()
 
 if __name__ == "__main__":
     main()
+
 
 
 """
