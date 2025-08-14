@@ -585,22 +585,3 @@ class TestProcessSalesDataErrorHandling:
         missing_columns = required_columns - actual_columns
         
         assert len(missing_columns) > 0
-
-
-# Test Execution Instructions and Summary
-def run_all_tests():
-    """Function to run all test cases and provide summary"""
-    print("\n" + "="*60)
-    print("SALES DATA PROCESSING - UNIT TEST EXECUTION SUMMARY")
-    print("="*60)
-    
-    test_cases = [
-        "TC001: Process sales data happy path",
-        "TC002: Aggregation by product_id", 
-        "TC003: Date range filtering",
-        "TC004: Optimized function happy path",
-        "TC005: Empty dataset handling",
-        "TC006: Null values handling",
-        "TC007: Boundary date conditions",
-        "TC008: Large decimal values",
-        "TC009
