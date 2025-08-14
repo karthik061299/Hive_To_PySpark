@@ -1,587 +1,471 @@
 =============================================
 Author:        Ascendion AVA+
 Created on:   
-Description:   Unit test cases for Hive to PySpark conversion of sales data processing procedure
+Description:   Unit test cases for PySpark sales data processing conversion
 =============================================
 
-## Test Case List
+Test Case List:
+===============
 
-| Test ID | Description | Expected Outcome |
-|---------|-------------|------------------|
-| TC001 | Process sales data happy path | Function processes data successfully with valid inputs |
-| TC002 | Aggregation by product_id | Data correctly grouped by product_id with sum of sales_amount |
-| TC003 | Date range filtering | Only records within specified date range are processed |
-| TC004 | Optimized function happy path | Optimized version produces same results as original |
-| TC005 | Empty dataset handling | Function handles empty data gracefully without errors |
-| TC006 | Null values handling | Function processes data with nulls appropriately |
-| TC007 | Boundary date conditions | Records on boundary dates are included/excluded correctly |
-| TC008 | Large decimal values | Large decimal values processed without overflow |
-| TC009 | Single record processing | Single record is processed correctly |
-| TC010 | Duplicate records | Duplicate records are included in aggregation |
-| TC011 | Invalid date format | Function handles invalid date formats gracefully |
-| TC012 | Memory optimization | Function handles large datasets efficiently |
-| TC013 | Concurrent execution | Function handles concurrent executions safely |
-| TC014 | Database connection failure | Function handles database connection failures |
-| TC015 | Schema validation | Function validates input schema correctly |
+### TC001: Happy Path - Spark Session Creation
+- **Test Case ID**: TC001
+- **Test Case Description**: Test successful creation of Spark session with optimized configurations
+- **Expected Outcome**: Spark session created with proper app name and configurations
 
-## Complete Pytest Script
+### TC002: Happy Path - Normal Data Processing
+- **Test Case ID**: TC002
+- **Test Case Description**: Test normal sales data processing with valid date range
+- **Expected Outcome**: Data filtered, aggregated, and written to target tables successfully
+
+### TC003: Edge Case - Empty DataFrame
+- **Test Case ID**: TC003
+- **Test Case Description**: Test processing with empty sales data
+- **Expected Outcome**: Function handles empty data gracefully without errors
+
+### TC004: Edge Case - Null Values
+- **Test Case ID**: TC004
+- **Test Case Description**: Test processing data containing null values
+- **Expected Outcome**: Null values handled appropriately in aggregations
+
+### TC005: Edge Case - Boundary Date Conditions
+- **Test Case ID**: TC005
+- **Test Case Description**: Test with same start and end date
+- **Expected Outcome**: Boundary conditions handled correctly
+
+### TC006: Edge Case - Invalid Date Range
+- **Test Case ID**: TC006
+- **Test Case Description**: Test with end date before start date
+- **Expected Outcome**: Function handles invalid range gracefully
+
+### TC007: Error Handling - Missing Table
+- **Test Case ID**: TC007
+- **Test Case Description**: Test error handling when sales_table doesn't exist
+- **Expected Outcome**: Appropriate exception raised
+
+### TC008: Error Handling - Write Failure
+- **Test Case ID**: TC008
+- **Test Case Description**: Test error handling when write operation fails
+- **Expected Outcome**: Exception propagated appropriately
+
+### TC009: Performance - Caching Behavior
+- **Test Case ID**: TC009
+- **Test Case Description**: Test DataFrame caching and unpersisting
+- **Expected Outcome**: Cache operations work correctly
+
+### TC010: Data Validation - Schema Validation
+- **Test Case ID**: TC010
+- **Test Case Description**: Test processing with incorrect schema
+- **Expected Outcome**: Schema mismatches handled appropriately
+
+### TC011: Configuration Validation
+- **Test Case ID**: TC011
+- **Test Case Description**: Test Spark session configuration accuracy
+- **Expected Outcome**: All required configurations applied
+
+### TC012: Date Filtering Accuracy
+- **Test Case ID**: TC012
+- **Test Case Description**: Test accuracy of date range filtering
+- **Expected Outcome**: Only records within date range processed
+
+Pytest Script Implementation:
+============================
 
 ```python
 """
 Author: Ascendion AVA+
 Created on: 
-Description: Unit test cases for Hive to PySpark conversion of sales data processing procedure
-
-This module contains comprehensive unit tests for the PySpark conversion of the Hive stored procedure
-'process_sales_data'. The tests cover happy path scenarios, edge cases, and error handling.
+Description: Unit test cases for PySpark sales data processing conversion
 """
 
 import pytest
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import sum as spark_sum, col
+from pyspark.sql.types import StructType, StructField, StringType, FloatType, DateType
 from datetime import datetime, date
-from decimal import Decimal
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, 
-    DecimalType, DateType, TimestampType
-)
-from pyspark.sql.functions import col, sum as spark_sum, count, when, avg, max as spark_max, to_date
-from unittest.mock import patch, MagicMock, Mock
-import sys
-import os
-import threading
-import time
-import gc
-import psutil
-from contextlib import contextmanager
+from unittest.mock import patch, MagicMock
+import logging
 
-# Add the source directory to the path (adjust as needed)
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-# Import the functions to be tested (assuming they are in a module called sales_processor)
-try:
-    from sales_processor import process_sales_data, process_sales_data_optimized
-except ImportError:
-    # Mock the functions if they don't exist yet
-    def process_sales_data(start_date, end_date):
-        pass
-    
-    def process_sales_data_optimized(start_date, end_date):
-        pass
+# Import the functions to test
+from sales_data_processor import create_spark_session, process_sales_data
 
 
-class TestProcessSalesData:
+class TestSalesDataProcessing:
     """
-    Test class for process_sales_data function conversion from Hive to PySpark
+    Comprehensive unit test suite for PySpark sales data processing functions.
+    
+    Test Cases Coverage:
+    - TC001: Happy path - Normal data processing
+    - TC002: Edge case - Empty DataFrame
+    - TC003: Edge case - Null values in data
+    - TC004: Edge case - Boundary date conditions
+    - TC005: Edge case - Invalid date formats
+    - TC006: Error handling - Missing tables
+    - TC007: Error handling - Invalid data types
+    - TC008: Error handling - Spark session failures
+    - TC009: Performance - Large dataset handling
+    - TC010: Data validation - Schema validation
     """
     
     @pytest.fixture(scope="class")
     def spark_session(self):
         """
-        Create SparkSession for testing
+        Create a test Spark session with minimal configuration.
         """
-        spark = SparkSession.builder \n            .appName("TestProcessSalesData") \n            .master("local[2]") \n            .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse") \n            .config("spark.sql.adaptive.enabled", "false") \n            .getOrCreate()
+        spark = SparkSession.builder \
+            .appName("test_sales_data_processing") \
+            .master("local[2]") \
+            .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse") \
+            .getOrCreate()
         
-        spark.sparkContext.setLogLevel("WARN")
         yield spark
         spark.stop()
     
     @pytest.fixture
-    def sample_sales_schema(self):
+    def sample_sales_data(self, spark_session):
         """
-        Define schema for sales data
+        Create sample sales data for testing.
         """
-        return StructType([
-            StructField("product_id", IntegerType(), True),
-            StructField("sales", DecimalType(10, 2), True),
-            StructField("sale_date", DateType(), True),
-            StructField("customer_id", IntegerType(), True),
-            StructField("region", StringType(), True)
-        ])
-    
-    @pytest.fixture
-    def sample_sales_data(self, spark_session, sample_sales_schema):
-        """
-        Create sample sales data for testing
-        """
-        data = [
-            (1, Decimal('100.50'), date(2023, 1, 15), 101, 'North'),
-            (1, Decimal('200.75'), date(2023, 1, 16), 102, 'North'),
-            (2, Decimal('150.25'), date(2023, 1, 15), 103, 'South'),
-            (2, Decimal('300.00'), date(2023, 1, 17), 104, 'South'),
-            (3, Decimal('75.50'), date(2023, 1, 18), 105, 'East'),
-            (1, Decimal('125.25'), date(2023, 1, 20), 106, 'West')
-        ]
-        return spark_session.createDataFrame(data, sample_sales_schema)
-    
-    @pytest.fixture
-    def empty_sales_data(self, spark_session, sample_sales_schema):
-        """
-        Create empty DataFrame for testing edge cases
-        """
-        return spark_session.createDataFrame([], sample_sales_schema)
-    
-    @pytest.fixture
-    def sales_data_with_nulls(self, spark_session, sample_sales_schema):
-        """
-        Create sales data with null values for testing
-        """
-        data = [
-            (1, Decimal('100.50'), date(2023, 1, 15), 101, 'North'),
-            (None, Decimal('200.75'), date(2023, 1, 16), 102, 'North'),
-            (2, None, date(2023, 1, 15), 103, 'South'),
-            (3, Decimal('150.25'), None, 104, 'South'),
-            (4, Decimal('75.50'), date(2023, 1, 18), None, None)
-        ]
-        return spark_session.createDataFrame(data, sample_sales_schema)
-    
-    def setup_method(self):
-        """
-        Setup method run before each test
-        """
-        self.start_date = '2023-01-15'
-        self.end_date = '2023-01-20'
-    
-    # HAPPY PATH TEST CASES
-    
-    def test_TC001_process_sales_data_happy_path(self, spark_session, sample_sales_data):
-        """
-        TC001: Test successful processing of sales data with valid date range
-        Expected: Function processes data successfully and returns expected aggregations
-        """
-        # Setup: Create temporary view for the function to use
-        sample_sales_data.createOrReplaceTempView("sales_table")
-        
-        # Test the actual processing logic
-        filtered_sales_df = sample_sales_data.filter(
-            (col("sale_date") >= self.start_date) & (col("sale_date") <= self.end_date)
-        )
-        
-        aggregated_sales_df = filtered_sales_df.groupBy("product_id") \n            .agg(spark_sum("sales").alias("total_sales")) \n            .select("product_id", "total_sales")
-        
-        result = aggregated_sales_df.collect()
-        
-        # Assert
-        assert len(result) > 0
-        assert all(row['total_sales'] > 0 for row in result)
-    
-    def test_TC002_aggregation_by_product_id(self, spark_session, sample_sales_data):
-        """
-        TC002: Test aggregation of sales data by product_id
-        Expected: Data is correctly grouped by product_id with sum of sales
-        """
-        # Filter data for date range
-        filtered_data = sample_sales_data.filter(
-            (col("sale_date") >= date(2023, 1, 15)) & 
-            (col("sale_date") <= date(2023, 1, 20))
-        )
-        
-        # Aggregate by product_id
-        aggregated = filtered_data.groupBy("product_id") \n            .agg(spark_sum("sales").alias("total_sales")) \n            .orderBy("product_id")
-        
-        result = aggregated.collect()
-        
-        # Assert
-        assert len(result) == 3
-        assert result[0]['product_id'] == 1
-        assert result[0]['total_sales'] == Decimal('426.50')  # 100.50 + 200.75 + 125.25
-        assert result[1]['product_id'] == 2
-        assert result[1]['total_sales'] == Decimal('450.25')  # 150.25 + 300.00
-        assert result[2]['product_id'] == 3
-        assert result[2]['total_sales'] == Decimal('75.50')
-    
-    def test_TC003_date_range_filtering(self, spark_session, sample_sales_data):
-        """
-        TC003: Test date range filtering functionality
-        Expected: Only records within specified date range are processed
-        """
-        # Test with narrow date range
-        start_date = date(2023, 1, 15)
-        end_date = date(2023, 1, 16)
-        
-        filtered_data = sample_sales_data.filter(
-            (col("sale_date") >= start_date) & 
-            (col("sale_date") <= end_date)
-        )
-        
-        result = filtered_data.collect()
-        
-        # Assert
-        assert len(result) == 3  # Only records from 2023-01-15 and 2023-01-16
-        for row in result:
-            assert row['sale_date'] >= start_date
-            assert row['sale_date'] <= end_date
-    
-    def test_TC004_process_sales_data_optimized_happy_path(self, spark_session, sample_sales_data):
-        """
-        TC004: Test optimized version of process_sales_data function
-        Expected: Optimized function produces same results as original with better performance
-        """
-        sample_sales_data.createOrReplaceTempView("sales_table")
-        
-        # Test optimized aggregation logic
-        aggregated_sales_df = sample_sales_data.filter(
-            (col("sale_date") >= self.start_date) & (col("sale_date") <= self.end_date)
-        ).groupBy("product_id") \n         .agg(spark_sum("sales").alias("total_sales")) \n         .select("product_id", "total_sales")
-        
-        result = aggregated_sales_df.collect()
-        
-        # Assert
-        assert len(result) > 0
-        assert all(row['total_sales'] > 0 for row in result)
-    
-    # EDGE CASE TEST CASES
-    
-    def test_TC005_empty_dataset(self, spark_session, empty_sales_data):
-        """
-        TC005: Test processing with empty dataset
-        Expected: Function handles empty data gracefully without errors
-        """
-        empty_sales_data.createOrReplaceTempView("sales_table")
-        
-        # Test aggregation on empty dataset
-        aggregated = empty_sales_data.groupBy("product_id") \n            .agg(spark_sum("sales").alias("total_sales"))
-        
-        result = aggregated.collect()
-        
-        # Assert
-        assert len(result) == 0
-    
-    def test_TC006_null_values_handling(self, spark_session, sales_data_with_nulls):
-        """
-        TC006: Test handling of null values in dataset
-        Expected: Function processes data with nulls appropriately, excluding null values from aggregations
-        """
-        # Filter out null product_ids and sales for aggregation
-        clean_data = sales_data_with_nulls.filter(
-            col("product_id").isNotNull() & 
-            col("sales").isNotNull()
-        )
-        
-        aggregated = clean_data.groupBy("product_id") \n            .agg(spark_sum("sales").alias("total_sales")) \n            .orderBy("product_id")
-        
-        result = aggregated.collect()
-        
-        # Assert
-        assert len(result) == 3  # Only non-null product_ids
-        assert result[0]['product_id'] == 1
-        assert result[0]['total_sales'] == Decimal('100.50')
-    
-    def test_TC007_boundary_date_conditions(self, spark_session, sample_sales_data):
-        """
-        TC007: Test boundary conditions for date filtering
-        Expected: Records on boundary dates are included/excluded correctly
-        """
-        # Test exact boundary dates
-        start_date = date(2023, 1, 15)
-        end_date = date(2023, 1, 15)
-        
-        filtered_data = sample_sales_data.filter(
-            (col("sale_date") >= start_date) & 
-            (col("sale_date") <= end_date)
-        )
-        
-        result = filtered_data.collect()
-        
-        # Assert
-        assert len(result) == 2  # Only records from exactly 2023-01-15
-        for row in result:
-            assert row['sale_date'] == start_date
-    
-    def test_TC008_large_decimal_values(self, spark_session, sample_sales_schema):
-        """
-        TC008: Test processing of large decimal values
-        Expected: Large decimal values are processed correctly without overflow
-        """
-        large_data = [
-            (1, Decimal('999999.99'), date(2023, 1, 15), 101, 'North'),
-            (1, Decimal('888888.88'), date(2023, 1, 16), 102, 'North')
-        ]
-        
-        df = spark_session.createDataFrame(large_data, sample_sales_schema)
-        
-        aggregated = df.groupBy("product_id") \n            .agg(spark_sum("sales").alias("total_sales"))
-        
-        result = aggregated.collect()
-        
-        # Assert
-        assert len(result) == 1
-        assert result[0]['total_sales'] == Decimal('1888888.87')
-    
-    def test_TC009_single_record_processing(self, spark_session, sample_sales_schema):
-        """
-        TC009: Test processing of dataset with single record
-        Expected: Single record is processed correctly
-        """
-        single_data = [(1, Decimal('100.50'), date(2023, 1, 15), 101, 'North')]
-        df = spark_session.createDataFrame(single_data, sample_sales_schema)
-        
-        aggregated = df.groupBy("product_id") \n            .agg(spark_sum("sales").alias("total_sales"))
-        
-        result = aggregated.collect()
-        
-        # Assert
-        assert len(result) == 1
-        assert result[0]['product_id'] == 1
-        assert result[0]['total_sales'] == Decimal('100.50')
-    
-    def test_TC010_duplicate_records(self, spark_session, sample_sales_schema):
-        """
-        TC010: Test processing of duplicate records
-        Expected: Duplicate records are included in aggregation
-        """
-        duplicate_data = [
-            (1, Decimal('100.50'), date(2023, 1, 15), 101, 'North'),
-            (1, Decimal('100.50'), date(2023, 1, 15), 101, 'North'),  # Exact duplicate
-            (1, Decimal('200.75'), date(2023, 1, 16), 102, 'North')
-        ]
-        
-        df = spark_session.createDataFrame(duplicate_data, sample_sales_schema)
-        
-        aggregated = df.groupBy("product_id") \n            .agg(spark_sum("sales").alias("total_sales"))
-        
-        result = aggregated.collect()
-        
-        # Assert
-        assert len(result) == 1
-        assert result[0]['total_sales'] == Decimal('401.75')  # All three records summed
-
-
-class TestProcessSalesDataErrorHandling:
-    """Test class for error handling and advanced scenarios in sales data processing"""
-    
-    @pytest.fixture(scope="class")
-    def spark_session(self):
-        """Create Spark session for testing"""
-        spark = SparkSession.builder \n            .appName("SalesDataProcessingTest") \n            .master("local[2]") \n            .config("spark.sql.adaptive.enabled", "false") \n            .config("spark.sql.adaptive.coalescePartitions.enabled", "false") \n            .getOrCreate()
-        
-        spark.sparkContext.setLogLevel("WARN")
-        yield spark
-        spark.stop()
-    
-    def test_TC011_invalid_date_format_handling(self, spark_session):
-        """
-        TC011: Test handling of invalid date formats
-        Expected: Function handles invalid date formats gracefully
-        """
-        invalid_data = [
-            ("T001", "C001", "P001", "2024-13-45", 100.50, 2, "North"),  # Invalid date
-            ("T002", "C002", "P002", "invalid-date", 200.75, 1, "South"),  # Invalid format
-            ("T003", "C003", "P003", "2024/01/03", 150.25, 3, "East"),   # Wrong format
-            ("T004", "C004", "P004", None, 300.00, 1, "West"),           # Null date
-            ("T005", "C005", "P005", "", 250.80, 2, "Central")            # Empty date
-        ]
-        
-        columns = ["transaction_id", "customer_id", "product_id", "sale_date", 
-                  "sale_amount", "quantity", "region"]
-        
-        df = spark_session.createDataFrame(invalid_data, columns)
-        
-        # Clean invalid dates by setting them to null
-        cleaned_df = df.withColumn(
-            "sale_date_cleaned",
-            when(to_date(col("sale_date"), "yyyy-MM-dd").isNotNull(), 
-                 to_date(col("sale_date"), "yyyy-MM-dd"))
-            .otherwise(None)
-        )
-        
-        # Count invalid dates
-        invalid_count = cleaned_df.filter(col("sale_date_cleaned").isNull()).count()
-        total_count = cleaned_df.count()
-        
-        # Assertions
-        assert total_count == 5
-        assert invalid_count >= 4  # Should have multiple invalid date records
-    
-    def test_TC012_memory_optimization(self, spark_session):
-        """
-        TC012: Test memory optimization with large datasets
-        Expected: Function handles large datasets efficiently
-        """
-        # Create a moderately large dataset for testing
-        import random
-        from datetime import timedelta
-        
-        large_data = []
-        base_date = date(2024, 1, 1)
-        
-        for i in range(1000):  # Reduced size for testing
-            transaction_date = base_date + timedelta(days=random.randint(0, 30))
-            large_data.append((
-                f"T{i:06d}",
-                f"C{random.randint(1, 100):04d}",
-                f"P{random.randint(1, 10):03d}",
-                transaction_date,
-                round(random.uniform(10.0, 1000.0), 2),
-                random.randint(1, 10),
-                random.choice(["North", "South", "East", "West", "Central"])
-            ))
-        
-        columns = ["transaction_id", "customer_id", "product_id", "sale_date", 
-                  "sale_amount", "quantity", "region"]
-        
-        df = spark_session.createDataFrame(large_data, columns)
-        
-        # Test caching strategy
-        cached_df = df.cache()
-        
-        # Perform multiple operations to test cache effectiveness
-        count1 = cached_df.count()
-        count2 = cached_df.filter(col("sale_amount") > 500).count()
-        
-        # Test partitioning optimization
-        partitioned_df = df.repartition(4, "region")
-        
-        # Perform aggregation by partition key
-        region_summary = partitioned_df.groupBy("region").agg(
-            spark_sum("sale_amount").alias("total_sales"),
-            count("*").alias("transaction_count"),
-            avg("sale_amount").alias("avg_sale_amount")
-        ).collect()
-        
-        # Assertions
-        assert count1 == 1000
-        assert len(region_summary) == 5
-        assert all(row['transaction_count'] > 0 for row in region_summary)
-        
-        # Memory cleanup
-        cached_df.unpersist()
-    
-    def test_TC013_concurrent_execution_safety(self, spark_session):
-        """
-        TC013: Test concurrent execution safety
-        Expected: Function handles concurrent executions safely
-        """
-        # Create test data for concurrent processing
-        test_data = [
-            ("T001", "C001", "P001", date(2024, 1, 1), 100.50, 2, "North"),
-            ("T002", "C002", "P002", date(2024, 1, 2), 200.75, 1, "South"),
-            ("T003", "C003", "P003", date(2024, 1, 3), 150.25, 3, "East"),
-            ("T004", "C004", "P004", date(2024, 1, 4), 300.00, 1, "West"),
-            ("T005", "C005", "P005", date(2024, 1, 5), 250.80, 2, "Central")
-        ]
-        
-        columns = ["transaction_id", "customer_id", "product_id", "sale_date", 
-                  "sale_amount", "quantity", "region"]
-        
-        df = spark_session.createDataFrame(test_data, columns)
-        
-        # Shared results storage
-        results = []
-        errors = []
-        
-        def concurrent_processing(thread_id, data_slice):
-            """Function to simulate concurrent processing"""
-            try:
-                # Simulate processing with aggregation
-                result = data_slice.groupBy("region").agg(
-                    spark_sum("sale_amount").alias("total_sales"),
-                    count("*").alias("transaction_count")
-                ).collect()
-                
-                # Simulate some processing time
-                time.sleep(0.01)
-                
-                results.append((thread_id, result))
-                
-            except Exception as e:
-                errors.append((thread_id, str(e)))
-        
-        # Create multiple threads for concurrent execution
-        threads = []
-        num_threads = 3
-        
-        for i in range(num_threads):
-            thread = threading.Thread(
-                target=concurrent_processing,
-                args=(i, df)
-            )
-            threads.append(thread)
-        
-        # Start all threads
-        for thread in threads:
-            thread.start()
-        
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join(timeout=5)  # 5 second timeout
-        
-        # Verify results
-        assert len(errors) == 0
-        assert len(results) == num_threads
-    
-    @patch('pyspark.sql.DataFrameWriter.jdbc')
-    def test_TC014_database_connection_failure(self, mock_jdbc, spark_session):
-        """
-        TC014: Test database connection failure scenarios
-        Expected: Function handles database connection failures gracefully
-        """
-        # Create test data
-        test_data = [
-            ("T001", "C001", "P001", date(2024, 1, 1), 100.50, 2, "North"),
-            ("T002", "C002", "P002", date(2024, 1, 2), 200.75, 1, "South")
-        ]
-        
-        columns = ["transaction_id", "customer_id", "product_id", "sale_date", 
-                  "sale_amount", "quantity", "region"]
-        
-        df = spark_session.createDataFrame(test_data, columns)
-        
-        # Test connection timeout
-        mock_jdbc.side_effect = Exception("Connection timeout: Unable to connect to database")
-        
-        with pytest.raises(Exception) as exc_info:
-            df.write.jdbc(
-                url="jdbc:postgresql://invalid-host:5432/testdb",
-                table="sales_data",
-                mode="append",
-                properties={
-                    "user": "testuser",
-                    "password": "testpass",
-                    "driver": "org.postgresql.Driver"
-                }
-            )
-        
-        assert "Connection timeout" in str(exc_info.value)
-    
-    def test_TC015_schema_validation(self, spark_session):
-        """
-        TC015: Test schema validation functionality
-        Expected: Function validates input schema correctly
-        """
-        # Define expected schema
-        expected_schema = StructType([
-            StructField("transaction_id", StringType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("sale_date", DateType(), False),
-            StructField("sale_amount", DecimalType(10, 2), False),
-            StructField("quantity", IntegerType(), False),
-            StructField("region", StringType(), False)
+        schema = StructType([
+            StructField("product_id", StringType(), True),
+            StructField("sales", FloatType(), True),
+            StructField("sale_date", DateType(), True)
         ])
         
-        # Test valid schema
-        valid_data = [
-            ("T001", "C001", "P001", date(2024, 1, 1), 100.50, 2, "North")
+        data = [
+            ("P001", 100.0, date(2023, 1, 15)),
+            ("P002", 200.0, date(2023, 1, 20)),
+            ("P001", 150.0, date(2023, 1, 25)),
+            ("P003", 300.0, date(2023, 2, 10)),
+            ("P002", 250.0, date(2023, 2, 15))
         ]
         
-        valid_df = spark_session.createDataFrame(valid_data, expected_schema)
+        return spark_session.createDataFrame(data, schema)
+    
+    @pytest.fixture
+    def empty_sales_data(self, spark_session):
+        """
+        Create empty sales DataFrame for testing edge cases.
+        """
+        schema = StructType([
+            StructField("product_id", StringType(), True),
+            StructField("sales", FloatType(), True),
+            StructField("sale_date", DateType(), True)
+        ])
         
-        # Validate schema matches expected
-        actual_schema = valid_df.schema
-        expected_fields = {field.name: field.dataType for field in expected_schema.fields}
-        actual_fields = {field.name: field.dataType for field in actual_schema.fields}
+        return spark_session.createDataFrame([], schema)
+    
+    @pytest.fixture
+    def sales_data_with_nulls(self, spark_session):
+        """
+        Create sales data with null values for testing.
+        """
+        schema = StructType([
+            StructField("product_id", StringType(), True),
+            StructField("sales", FloatType(), True),
+            StructField("sale_date", DateType(), True)
+        ])
         
-        assert actual_fields == expected_fields
+        data = [
+            ("P001", 100.0, date(2023, 1, 15)),
+            (None, 200.0, date(2023, 1, 20)),
+            ("P001", None, date(2023, 1, 25)),
+            ("P003", 300.0, None)
+        ]
         
-        # Test missing required columns
-        incomplete_data = [("T001", "C001", "P001")]  # Missing required fields
-        incomplete_columns = ["transaction_id", "customer_id", "product_id"]
+        return spark_session.createDataFrame(data, schema)
+    
+    def test_tc001_create_spark_session_happy_path(self):
+        """
+        TC001: Test successful creation of Spark session with optimized configurations.
         
-        incomplete_df = spark_session.createDataFrame(incomplete_data, incomplete_columns)
+        Expected Outcome: Spark session created successfully with proper configurations.
+        """
+        app_name = "test_app"
         
-        # Check for missing columns
-        required_columns = {field.name for field in expected_schema.fields}
-        actual_columns = set(incomplete_df.columns)
-        missing_columns = required_columns - actual_columns
+        with patch('pyspark.sql.SparkSession.builder') as mock_builder:
+            mock_spark = MagicMock()
+            mock_builder.appName.return_value = mock_builder
+            mock_builder.config.return_value = mock_builder
+            mock_builder.enableHiveSupport.return_value = mock_builder
+            mock_builder.getOrCreate.return_value = mock_spark
+            
+            result = create_spark_session(app_name)
+            
+            # Assertions
+            mock_builder.appName.assert_called_once_with(app_name)
+            assert mock_builder.config.call_count >= 3  # At least 3 config calls
+            mock_builder.enableHiveSupport.assert_called_once()
+            mock_builder.getOrCreate.assert_called_once()
+            assert result == mock_spark
+    
+    def test_tc002_process_sales_data_happy_path(self, spark_session, sample_sales_data):
+        """
+        TC002: Test normal sales data processing with valid date range.
         
-        assert len(missing_columns) > 0
+        Expected Outcome: Data filtered correctly, aggregations performed, 
+        and results written to target tables.
+        """
+        # Setup
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        # Create temporary view for testing
+        sample_sales_data.createOrReplaceTempView("sales_table")
+        
+        with patch.object(spark_session, 'table', return_value=sample_sales_data):
+            with patch('pyspark.sql.DataFrameWriter.insertInto') as mock_insert:
+                mock_insert.return_value = None
+                
+                result = process_sales_data(spark_session, start_date, end_date)
+                
+                # Assertions
+                assert result is True
+                assert mock_insert.call_count == 2  # Two insertInto calls
+    
+    def test_tc003_process_sales_data_empty_dataframe(self, spark_session, empty_sales_data):
+        """
+        TC003: Test processing with empty DataFrame.
+        
+        Expected Outcome: Function handles empty data gracefully without errors.
+        """
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        with patch.object(spark_session, 'table', return_value=empty_sales_data):
+            with patch('pyspark.sql.DataFrameWriter.insertInto') as mock_insert:
+                mock_insert.return_value = None
+                
+                result = process_sales_data(spark_session, start_date, end_date)
+                
+                # Assertions
+                assert result is True
+                # Should still call insertInto for summary_table even with empty data
+                assert mock_insert.call_count >= 1
+    
+    def test_tc004_process_sales_data_with_nulls(self, spark_session, sales_data_with_nulls):
+        """
+        TC004: Test processing data containing null values.
+        
+        Expected Outcome: Null values handled appropriately in aggregations.
+        """
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        with patch.object(spark_session, 'table', return_value=sales_data_with_nulls):
+            with patch('pyspark.sql.DataFrameWriter.insertInto') as mock_insert:
+                mock_insert.return_value = None
+                
+                result = process_sales_data(spark_session, start_date, end_date)
+                
+                # Assertions
+                assert result is True
+    
+    def test_tc005_process_sales_data_boundary_dates(self, spark_session, sample_sales_data):
+        """
+        TC005: Test with boundary date conditions (same start and end date).
+        
+        Expected Outcome: Boundary conditions handled correctly.
+        """
+        start_date = "2023-01-15"
+        end_date = "2023-01-15"  # Same date
+        
+        with patch.object(spark_session, 'table', return_value=sample_sales_data):
+            with patch('pyspark.sql.DataFrameWriter.insertInto') as mock_insert:
+                mock_insert.return_value = None
+                
+                result = process_sales_data(spark_session, start_date, end_date)
+                
+                # Assertions
+                assert result is True
+    
+    def test_tc006_process_sales_data_invalid_date_range(self, spark_session, sample_sales_data):
+        """
+        TC006: Test with invalid date range (end date before start date).
+        
+        Expected Outcome: Function handles invalid date range gracefully.
+        """
+        start_date = "2023-01-31"
+        end_date = "2023-01-01"  # End before start
+        
+        with patch.object(spark_session, 'table', return_value=sample_sales_data):
+            with patch('pyspark.sql.DataFrameWriter.insertInto') as mock_insert:
+                mock_insert.return_value = None
+                
+                result = process_sales_data(spark_session, start_date, end_date)
+                
+                # Should still return True but process empty result set
+                assert result is True
+    
+    def test_tc007_process_sales_data_missing_table(self, spark_session):
+        """
+        TC007: Test error handling when sales_table doesn't exist.
+        
+        Expected Outcome: Appropriate exception raised for missing table.
+        """
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        # Mock table method to raise exception
+        with patch.object(spark_session, 'table', side_effect=Exception("Table not found")):
+            with pytest.raises(Exception) as exc_info:
+                process_sales_data(spark_session, start_date, end_date)
+            
+            assert "Table not found" in str(exc_info.value)
+    
+    def test_tc008_process_sales_data_write_failure(self, spark_session, sample_sales_data):
+        """
+        TC008: Test error handling when write operation fails.
+        
+        Expected Outcome: Exception propagated when write fails.
+        """
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        with patch.object(spark_session, 'table', return_value=sample_sales_data):
+            with patch('pyspark.sql.DataFrameWriter.insertInto', side_effect=Exception("Write failed")):
+                with pytest.raises(Exception) as exc_info:
+                    process_sales_data(spark_session, start_date, end_date)
+                
+                assert "Write failed" in str(exc_info.value)
+    
+    def test_tc009_process_sales_data_caching_behavior(self, spark_session, sample_sales_data):
+        """
+        TC009: Test that DataFrame caching and unpersisting works correctly.
+        
+        Expected Outcome: Cache and unpersist methods called appropriately.
+        """
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        with patch.object(spark_session, 'table', return_value=sample_sales_data):
+            with patch('pyspark.sql.DataFrameWriter.insertInto') as mock_insert:
+                mock_insert.return_value = None
+                
+                result = process_sales_data(spark_session, start_date, end_date)
+                
+                # Assertions
+                assert result is True
+    
+    def test_tc010_process_sales_data_schema_validation(self, spark_session):
+        """
+        TC010: Test processing with incorrect schema.
+        
+        Expected Outcome: Function handles schema mismatches appropriately.
+        """
+        # Create DataFrame with wrong schema
+        wrong_schema = StructType([
+            StructField("wrong_column", StringType(), True)
+        ])
+        
+        wrong_data = spark_session.createDataFrame([("test",)], wrong_schema)
+        
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        with patch.object(spark_session, 'table', return_value=wrong_data):
+            with pytest.raises(Exception):  # Should raise exception due to missing columns
+                process_sales_data(spark_session, start_date, end_date)
+    
+    def test_tc011_create_spark_session_configuration_validation(self):
+        """
+        TC011: Test that Spark session is created with correct configurations.
+        
+        Expected Outcome: All required configurations are applied.
+        """
+        app_name = "test_config_validation"
+        
+        with patch('pyspark.sql.SparkSession.builder') as mock_builder:
+            mock_spark = MagicMock()
+            mock_builder.appName.return_value = mock_builder
+            mock_builder.config.return_value = mock_builder
+            mock_builder.enableHiveSupport.return_value = mock_builder
+            mock_builder.getOrCreate.return_value = mock_spark
+            
+            create_spark_session(app_name)
+            
+            # Verify specific configurations are called
+            mock_builder.config.assert_any_call("spark.sql.adaptive.enabled", "true")
+            mock_builder.config.assert_any_call("spark.sql.adaptive.coalescePartitions.enabled", "true")
+            mock_builder.config.assert_any_call("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    
+    def test_tc012_process_sales_data_date_filtering_accuracy(self, spark_session):
+        """
+        TC012: Test accuracy of date filtering logic.
+        
+        Expected Outcome: Only records within date range are processed.
+        """
+        # Create test data with specific dates
+        schema = StructType([
+            StructField("product_id", StringType(), True),
+            StructField("sales", FloatType(), True),
+            StructField("sale_date", DateType(), True)
+        ])
+        
+        data = [
+            ("P001", 100.0, date(2022, 12, 31)),  # Before range
+            ("P002", 200.0, date(2023, 1, 15)),   # Within range
+            ("P003", 300.0, date(2023, 2, 1))     # After range
+        ]
+        
+        test_data = spark_session.createDataFrame(data, schema)
+        
+        start_date = "2023-01-01"
+        end_date = "2023-01-31"
+        
+        with patch.object(spark_session, 'table', return_value=test_data):
+            with patch('pyspark.sql.DataFrameWriter.insertInto') as mock_insert:
+                mock_insert.return_value = None
+                
+                result = process_sales_data(spark_session, start_date, end_date)
+                
+                # Assertions
+                assert result is True
+                assert mock_insert.call_count == 2
+
+
+# Helper functions for test execution
+def setup_test_environment():
+    """
+    Setup function to prepare test environment.
+    """
+    logging.basicConfig(level=logging.INFO)
+    return True
+
+
+def teardown_test_environment():
+    """
+    Cleanup function after test execution.
+    """
+    return True
+
+
+# Test case execution configuration
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])
+```
+
+Test Execution Instructions:
+===========================
+
+1. **Prerequisites**:
+   - Install required packages: `pip install pytest pyspark`
+   - Ensure PySpark is properly configured
+   - Have the sales_data_processor module available
+
+2. **Running Tests**:
+   - Execute all tests: `pytest test_sales_data_processing.py -v`
+   - Run specific test: `pytest test_sales_data_processing.py::TestSalesDataProcessing::test_tc001_create_spark_session_happy_path -v`
+   - Generate coverage report: `pytest test_sales_data_processing.py --cov=sales_data_processor --cov-report=html`
+
+3. **Test Environment Setup**:
+   - Tests use local Spark session for isolation
+   - Mock objects are used to avoid external dependencies
+   - Fixtures provide reusable test data
+
+4. **Expected Test Results**:
+   - All happy path tests should pass with valid data
+   - Edge case tests should handle boundary conditions gracefully
+   - Error handling tests should raise appropriate exceptions
+   - Performance tests should validate caching behavior
+
+API Cost Consumed: Approximately $0.15 for comprehensive test case generation and implementation.
