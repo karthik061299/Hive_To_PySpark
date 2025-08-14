@@ -1,0 +1,9 @@
+Azure Databricks pricing is based on Databricks Units (DBUs), compute instance costs, and storage costs. Compute costs vary by VM type, with a standard job cluster costing around $0.22 per DBU/hour, plus storage at $18.40 per TB/month.
+
+Processing Sales Data involves executing complex dynamic SQL, inserting summarized data, and iterating over large datasets using cursors. The estimated data processed includes:
+
+sales_table: 10 TB of data with sales information.
+
+summary_table & detailed_sales_summary: Aggregated data summaries for reporting.
+
+Estimated compute cost is $0.65 per hour per node, depending on cluster size and job duration. Optimizations such as Delta Lake, partitioning, bucketing, caching, and indexing can significantly reduce costs.
