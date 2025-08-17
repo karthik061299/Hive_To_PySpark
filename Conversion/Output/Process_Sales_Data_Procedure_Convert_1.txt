@@ -1,0 +1,102 @@
+=============================================
+Author:        Ascendion AVA+
+Created on:   
+Description:   Convert Hive stored procedure process_sales_data to PySpark with Delta tables for sales data processing
+=============================================
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import sum as spark_sum, col
+from pyspark.sql.types import StructType, StructField, StringType, FloatType
+from delta.tables import DeltaTable
+import logging
+
+
+def process_sales_data(start_date: str, end_date: str) -> None:
+    """
+    Process sales data between specified date range using PySpark and Delta tables.
+    
+    Args:
+        start_date (str): Start date in string format
+        end_date (str): End date in string format
+    """
+    
+    # Initialize Spark session with Delta Lake support
+    spark = SparkSession.builder \
+        .appName("ProcessSalesData") \
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+        .getOrCreate()
+    
+    try:
+        # Read sales_table as Delta table
+        sales_df = spark.read.format("delta").table("sales_table")
+        
+        # Filter data based on date range and aggregate by product_id
+        # This replaces the dynamic SQL query execution
+        sales_summary_df = sales_df \
+            .filter((col("sale_date") >= start_date) & (col("sale_date") <= end_date)) \
+            .groupBy("product_id") \
+            .agg(spark_sum("sales").alias("total_sales"))
+        
+        # Write aggregated data to summary_table (Delta format)
+        # This replaces the INSERT INTO summary_table operation
+        sales_summary_df.write \
+            .format("delta") \
+            .mode("append") \
+            .saveAsTable("summary_table")
+        
+        # Create temporary view for intermediate processing
+        # This replaces the CREATE TEMPORARY TABLE temp_sales_summary
+        temp_sales_summary_df = sales_df \
+            .filter((col("sale_date") >= start_date) & (col("sale_date") <= end_date)) \
+            .groupBy("product_id") \
+            .agg(spark_sum("sales").alias("total_sales"))
+        
+        temp_sales_summary_df.createOrReplaceTempView("temp_sales_summary")
+        
+        # Process cursor logic using DataFrame operations
+        # This replaces the CURSOR operations and WHILE loop
+        cursor_data_df = temp_sales_summary_df.select("product_id", "total_sales") \
+            .filter(col("total_sales").isNotNull())
+        
+        # Prepare data for detailed_sales_summary table
+        # This replaces the cursor iteration and individual INSERT operations
+        detailed_summary_df = cursor_data_df.select(
+            col("product_id"),
+            col("total_sales")
+        )
+        
+        # Write to detailed_sales_summary Delta table
+        # This replaces the INSERT INTO detailed_sales_summary operations
+        detailed_summary_df.write \
+            .format("delta") \
+            .mode("append") \
+            .saveAsTable("detailed_sales_summary")
+        
+        # Clean up temporary view (replaces DROP TABLE temp_sales_summary)
+        spark.catalog.dropTempView("temp_sales_summary")
+        
+        logging.info(f"Successfully processed sales data from {start_date} to {end_date}")
+        
+    except Exception as e:
+        logging.error(f"Error processing sales data: {str(e)}")
+        raise
+    
+    finally:
+        # Clean up Spark session
+        spark.stop()
+
+
+def main():
+    """
+    Main function to execute the sales data processing.
+    """
+    # Example usage - replace with actual parameter passing mechanism
+    start_date = "2023-01-01"
+    end_date = "2023-12-31"
+    
+    process_sales_data(start_date, end_date)
+
+
+if __name__ == "__main__":
+    main()
